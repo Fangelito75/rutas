@@ -1,0 +1,309 @@
+<html><head><base href="/" />
+    <meta charset="UTF-8">
+    <title>Optimización de Rutas de Recogida - Coria del Río</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+        }
+        
+        .navbar {
+            background: #2c3e50;
+        }
+        
+        #map {
+            height: 75vh;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        
+        .control-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        
+        .stats-panel {
+            background: #34495e;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        
+        .btn-primary {
+            background: #2980b9;
+            border: none;
+        }
+        
+        .btn-primary:hover {
+            background: #3498db;
+        }
+
+        .leaflet-routing-container {
+            display: none;
+        }
+
+        .fuel-type-selector {
+            margin-bottom: 15px;
+        }
+
+        .container-icon:hover {
+            cursor: pointer;
+            opacity: 0.8;
+        }
+
+        .delete-tooltip {
+            position: absolute;
+            background: white;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+
+        .route-legend {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">
+                <svg width="30" height="30" class="me-2" viewBox="0 0 24 24" fill="white">
+                    <path d="M19,8H5V6H19M19,18H5V12H19M20,4H4C3.45,4 3,4.45 3,5V19C3,19.55 3.45,20 4,20H20C20.55,20 21,19.55 21,19V5C21,4.45 20.55,4 20,4Z"/>
+                </svg>
+                Optimización de Rutas - Coria del Río
+            </span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-md-9 position-relative">
+                <div id="map"></div>
+                <div class="route-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #2980b9;"></div>
+                        <span>Ruta de ida</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #e74c3c;"></div>
+                        <span>Ruta de vuelta</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="control-panel">
+                    <h5>Panel de Control</h5>
+                    <div class="fuel-type-selector">
+                        <label class="form-label">Tipo de Combustible:</label>
+                        <select class="form-select" id="fuelType">
+                            <option value="diesel">Diésel</option>
+                            <option value="gasoline">Gasolina</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <button class="btn btn-primary w-100 mb-2" onclick="addContainer()">
+                            Añadir Contenedor
+                        </button>
+                        <button class="btn btn-primary w-100 mb-2" onclick="setDepot()">
+                            Establecer Base
+                        </button>
+                        <button class="btn btn-success w-100 mb-2" onclick="calculateRoute()">
+                            Calcular Ruta Óptima
+                        </button>
+                        <button class="btn btn-warning w-100" onclick="resetMap()">
+                            Reiniciar Mapa
+                        </button>
+                    </div>
+                    
+                    <div class="stats-panel">
+                        <h6>Estadísticas de Ruta</h6>
+                        <div id="routeStats">
+                            <p>Distancia: <span id="distance">0 km</span></p>
+                            <p>Tiempo Est.: <span id="time">0 min</span></p>
+                            <p>Combustible: <span id="fuel">0 L</span></p>
+                            <p>CO2: <span id="co2">0 kg</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    <script>
+        let map = L.map('map').setView([37.2887, -6.0550], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let containers = [];
+        let depot = null;
+        let routingControlOutbound = null;
+        let routingControlInbound = null;
+
+        function addContainer() {
+            map.once('click', function(e) {
+                let marker = L.marker(e.latlng, {
+                    draggable: true,
+                    icon: L.divIcon({
+                        html: `<svg width="24" height="24" viewBox="0 0 24 24" fill="#2c3e50">
+                                <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
+                              </svg>`,
+                        className: 'container-icon'
+                    })
+                }).addTo(map);
+
+                marker.on('click', function() {
+                    map.removeLayer(marker);
+                    containers = containers.filter(c => c !== marker);
+                });
+
+                marker.on('mouseover', function(e) {
+                    marker.bindTooltip('Click para eliminar', {
+                        className: 'delete-tooltip',
+                        direction: 'top'
+                    }).openTooltip();
+                });
+
+                containers.push(marker);
+            });
+        }
+
+        function setDepot() {
+            map.once('click', function(e) {
+                if (depot) map.removeLayer(depot);
+                depot = L.marker(e.latlng, {
+                    icon: L.divIcon({
+                        html: `<svg width="24" height="24" viewBox="0 0 24 24" fill="#e74c3c">
+                                <path d="M12,2C8.13,2 5,5.13 5,9C5,14.25 12,22 12,22C12,22 19,14.25 19,9C19,5.13 15.87,2 12,2Z"/>
+                              </svg>`,
+                        className: 'depot-icon'
+                    })
+                }).addTo(map);
+            });
+        }
+
+        function resetMap() {
+            if (routingControlOutbound) {
+                map.removeControl(routingControlOutbound);
+            }
+            if (routingControlInbound) {
+                map.removeControl(routingControlInbound);
+            }
+            containers.forEach(container => map.removeLayer(container));
+            if (depot) map.removeLayer(depot);
+            containers = [];
+            depot = null;
+            document.getElementById('distance').textContent = '0 km';
+            document.getElementById('time').textContent = '0 min';
+            document.getElementById('fuel').textContent = '0 L';
+            document.getElementById('co2').textContent = '0 kg';
+        }
+
+        function calculateRoute() {
+            if (!depot || containers.length === 0) {
+                alert('Por favor, establezca una base y añada contenedores');
+                return;
+            }
+
+            if (routingControlOutbound) map.removeControl(routingControlOutbound);
+            if (routingControlInbound) map.removeControl(routingControlInbound);
+
+            let points = containers.map(c => c.getLatLng());
+            let depotPoint = depot.getLatLng();
+            let route = [depotPoint];
+            let unvisited = [...points];
+            
+            while (unvisited.length > 0) {
+                let current = route[route.length - 1];
+                let nearest = unvisited.reduce((min, point) => {
+                    let dist = current.distanceTo(point);
+                    return dist < min.dist ? {point, dist} : min;
+                }, {point: unvisited[0], dist: Infinity});
+                
+                route.push(nearest.point);
+                unvisited = unvisited.filter(p => p !== nearest.point);
+            }
+
+            // Ruta de ida (azul)
+            let outboundWaypoints = route.map(point => L.latLng(point.lat, point.lng));
+            routingControlOutbound = L.Routing.control({
+                waypoints: outboundWaypoints,
+                lineOptions: {
+                    styles: [{color: '#2980b9', weight: 4}]
+                },
+                createMarker: function() { return null; }
+            }).addTo(map);
+
+            // Ruta de vuelta (rojo)
+            let inboundWaypoints = [route[route.length - 1], depotPoint];
+            routingControlInbound = L.Routing.control({
+                waypoints: inboundWaypoints,
+                lineOptions: {
+                    styles: [{color: '#e74c3c', weight: 4}]
+                },
+                createMarker: function() { return null; }
+            }).addTo(map);
+
+            let totalStats = {distance: 0, time: 0};
+            
+            routingControlOutbound.on('routesfound', function(e) {
+                totalStats.distance += e.routes[0].summary.totalDistance;
+                totalStats.time += e.routes[0].summary.totalTime;
+                updateStats(totalStats);
+            });
+
+            routingControlInbound.on('routesfound', function(e) {
+                totalStats.distance += e.routes[0].summary.totalDistance;
+                totalStats.time += e.routes[0].summary.totalTime;
+                updateStats(totalStats);
+            });
+        }
+
+        function updateStats(stats) {
+            let distance = stats.distance / 1000; // km
+            let time = stats.time / 60; // minutos
+            
+            let fuelType = document.getElementById('fuelType').value;
+            let fuelConsumption = fuelType === 'diesel' ? 0.35 : 0.4; // L/km
+            let co2Factor = fuelType === 'diesel' ? 2.68 : 2.37; // kg CO2/L
+            
+            let fuel = distance * fuelConsumption;
+            let co2 = fuel * co2Factor;
+
+            document.getElementById('distance').textContent = distance.toFixed(2) + ' km';
+            document.getElementById('time').textContent = time.toFixed(0) + ' min';
+            document.getElementById('fuel').textContent = fuel.toFixed(2) + ' L';
+            document.getElementById('co2').textContent = co2.toFixed(2) + ' kg';
+        }
+    </script>
+</body></html>
